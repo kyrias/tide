@@ -1,16 +1,46 @@
 use std::convert::TryInto;
-use std::fmt::{Debug, Display};
+use std::fmt::{self, Debug, Display};
 use std::ops::Index;
+#[cfg(feature = "secure-cookies")]
+use std::sync::Arc;
 
 use crate::http::cookies::Cookie;
+#[cfg(feature = "secure-cookies")]
+use crate::http::cookies::Key;
 use crate::http::headers::{self, HeaderName, HeaderValues, ToHeaderValues};
 use crate::http::{self, Body, Error, Mime, StatusCode};
 use crate::ResponseBuilder;
 
-#[derive(Debug)]
 pub(crate) enum CookieEvent {
     Added(Cookie<'static>),
+    #[cfg(feature = "secure-cookies")]
+    #[cfg_attr(feature = "docs", doc(cfg(feature = "secure-cookies")))]
+    AddedSigned(Arc<Key>, Cookie<'static>),
+    #[cfg(feature = "secure-cookies")]
+    #[cfg_attr(feature = "docs", doc(cfg(feature = "secure-cookies")))]
+    AddedPrivate(Arc<Key>, Cookie<'static>),
     Removed(Cookie<'static>),
+}
+
+impl fmt::Debug for CookieEvent {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CookieEvent::Added(cookie) => fmt.debug_tuple("Added").field(&cookie).finish(),
+            #[cfg(feature = "secure-cookies")]
+            CookieEvent::AddedSigned(_key, cookie) => fmt
+                .debug_tuple("AddedSigned")
+                .field(&"[secret key redacted]")
+                .field(&cookie)
+                .finish(),
+            #[cfg(feature = "secure-cookies")]
+            CookieEvent::AddedPrivate(_key, cookie) => fmt
+                .debug_tuple("AddedPrivate")
+                .field(&"[secret key redacted]")
+                .field(&cookie)
+                .finish(),
+            CookieEvent::Removed(cookie) => fmt.debug_tuple("Removed").field(&cookie).finish(),
+        }
+    }
 }
 
 /// An HTTP response
@@ -28,7 +58,7 @@ impl Response {
     pub fn new<S>(status: S) -> Self
     where
         S: TryInto<StatusCode>,
-        S::Error: Debug,
+        S::Error: fmt::Debug,
     {
         let res = http::Response::new(status);
         Self {
@@ -232,6 +262,22 @@ impl Response {
     /// Insert cookie in the cookie jar.
     pub fn insert_cookie(&mut self, cookie: Cookie<'static>) {
         self.cookie_events.push(CookieEvent::Added(cookie));
+    }
+
+    /// Add signed cookie to the cookie jar.
+    #[cfg(feature = "secure-cookies")]
+    #[cfg_attr(feature = "docs", doc(cfg(feature = "secure-cookies")))]
+    pub fn set_signed_cookie(&mut self, key: Arc<Key>, cookie: Cookie<'static>) {
+        self.cookie_events
+            .push(CookieEvent::AddedSigned(key, cookie));
+    }
+
+    /// Add authenticated and encrypted cookie to the cookie jar.
+    #[cfg(feature = "secure-cookies")]
+    #[cfg_attr(feature = "docs", doc(cfg(feature = "secure-cookies")))]
+    pub fn set_private_cookie(&mut self, key: Arc<Key>, cookie: Cookie<'static>) {
+        self.cookie_events
+            .push(CookieEvent::AddedPrivate(key, cookie));
     }
 
     /// Removes the cookie. This instructs the `CookiesMiddleware` to send a cookie with empty value
